@@ -268,6 +268,19 @@
             '...R...'
         ]);
 
+        const hammerImg = sprite([
+            '.NNNNNN.',
+            'NYYYYYYN',
+            'NYYYYYYN',
+            '.NNNNNN.',
+            '...NN...',
+            '...NN...',
+            '...NN...',
+            '...NN...',
+            '...NN...',
+            '...NN...'
+        ]);
+
         // ---------- Level: schräge Träger und Leitern ----------
         const girders = [
             { x0: 0, x1: 256, y0: 228, y1: 228 },
@@ -362,7 +375,10 @@
             count: () => tone(1760, 0.03, 'square', 0.025),
             start: () => melody([392, 523, 659, 523, 659, 784], 0.08, 'square', 0.05),
             over: () => melody([392, 0, 330, 0, 262, 247, 220, 196], 0.14, 'triangle', 0.12),
-            bump: () => tone(196, 0.08, 'square', 0.04)
+            bump: () => tone(196, 0.08, 'square', 0.04),
+            pickup: () => melody([523, 659, 784, 1047, 1319], 0.05),
+            smash: () => { noise(0.2, 0.18, 1500); tone(160, 0.15, 'square', 0.06, -110); },
+            hammerEnd: () => melody([784, 523], 0.08)
         };
 
         function toggleMute() {
@@ -388,6 +404,10 @@
         const BASS = ['A', 'F', 'G', 'E', 'A', 'D', 'E', 'E']
             .flatMap(r => [r + '2', '-', r + '3', '-', r + '2', '-', r + '3', '-']).map(note);
 
+        // Schnellere Melodie, solange der Hammer aktiv ist
+        const HAMMER_TUNE = 'C5 C5 G4 C5 E5 - C5 -  D5 D5 A4 D5 F5 - D5 -'.split(/\s+/).map(note);
+        const HAMMER_BASS = ['C', 'C', 'D', 'D'].flatMap(r => [r + '2', '-', r + '3', '-']).map(note);
+
         const music = { step: 0, next: 0, timer: null };
 
         function startMusic(delay = 0) {
@@ -405,14 +425,16 @@
 
         function scheduleMusic() {
             if (document.hidden) return;
-            const stepDur = 60 / (Math.min(180, 134 + round * 6) * 2);
+            const hammerOn = player && player.hammer > 0;
+            const tune = hammerOn ? HAMMER_TUNE : TUNE, bass = hammerOn ? HAMMER_BASS : BASS;
+            const stepDur = 60 / (Math.min(180, 134 + round * 6) * 2) * (hammerOn ? 0.8 : 1);
             // Nach einer Pause nicht alle verpassten Noten auf einmal nachspielen
             if (music.next < audio.currentTime - 0.1) music.next = audio.currentTime + 0.05;
             while (music.next < audio.currentTime + 0.2) {
-                const i = music.step % TUNE.length;
+                const i = music.step % tune.length;
                 const d = Math.max(0, music.next - audio.currentTime);
-                if (TUNE[i]) tone(TUNE[i], stepDur * 0.85, 'square', 0.022, 0, d);
-                if (BASS[i]) tone(BASS[i], stepDur * 1.8, 'triangle', 0.09, 0, d);
+                if (tune[i]) tone(tune[i], stepDur * 0.85, 'square', 0.022, 0, d);
+                if (bass[i]) tone(bass[i], stepDur * 1.8, 'triangle', 0.09, 0, d);
                 if (i % 2) noise(0.025, 0.018, 7000, d);
                 music.next += stepDur;
                 music.step++;
@@ -423,7 +445,7 @@
         const input = { left: false, right: false, up: false, down: false, jump: false, start: false };
         let mode = 'title', modeT = 0, tick = 0;
         let score = 0, lives = 3, round = 1, bonus = 5000, best = loadBest();
-        let player = null, barrels = [], particles = [], popups = [];
+        let player = null, barrels = [], particles = [], popups = [], hammers = [];
         let ape = { pose: 'idle', poseT: 0, timer: 60 };
         let shake = 0, flash = 0, iris = null, drumLit = false;
 
@@ -447,7 +469,9 @@
         }
 
         function resetRound() {
-            player = { x: 40, y: 228, g: 0, state: 'ground', vx: 0, vy: 0, face: 1, anim: 0, sx: 1, sy: 1, ladder: null };
+            player = { x: 40, y: 228, g: 0, state: 'ground', vx: 0, vy: 0, face: 1, anim: 0, sx: 1, sy: 1, ladder: null, hammer: 0 };
+            // Hämmer schweben knapp über Sprunghöhe; y ist die Unterkante
+            hammers = [{ x: 210, g: 1 }, { x: 44, g: 4 }].map(h => ({ ...h, y: gy(h.g, h.x) - 18, taken: false }));
             barrels = [];
             popups = [];
             ape = { pose: 'idle', poseT: 0, timer: 60 };
@@ -560,14 +584,14 @@
                 }
 
                 if (p.state === 'ground') {
-                    const up = input.up && ladders.find(l => l.b === p.g && Math.abs(p.x - l.x) < 4);
-                    const down = input.down && ladders.find(l => l.t === p.g && Math.abs(p.x - l.x) < 4);
+                    const up = input.up && !p.hammer && ladders.find(l => l.b === p.g && Math.abs(p.x - l.x) < 4);
+                    const down = input.down && !p.hammer && ladders.find(l => l.t === p.g && Math.abs(p.x - l.x) < 4);
                     if (up || down) {
                         p.state = 'ladder';
                         p.ladder = up || down;
                         p.x = p.ladder.x;
                         if (down) p.y += 1;
-                    } else if (input.jump) {
+                    } else if (input.jump && !p.hammer) {
                         p.state = 'air';
                         p.vy = -2.5;
                         p.sx = 0.75;
@@ -614,6 +638,19 @@
                     p.state = 'ground';
                 }
             }
+
+            for (const h of hammers) {
+                if (h.taken) continue;
+                if (Math.abs(p.x - h.x) < 8 && p.y - 16 <= h.y && p.y >= h.y - 10) {
+                    h.taken = true;
+                    p.hammer = 600;
+                    burst(h.x, h.y - 5, 16, SPARK, { speed: 1.4, life: 30 });
+                    sfx.pickup();
+                } else if (tick % 20 === 0) {
+                    burst(h.x - 4 + Math.random() * 8, h.y - 10 + Math.random() * 10, 1, SPARK, { speed: 0.2, life: 20 });
+                }
+            }
+            if (p.hammer > 0 && --p.hammer === 0) sfx.hammerEnd();
 
             if (p.state === 'ground' && p.g === 6) win();
         }
@@ -716,6 +753,14 @@
         function checkHits() {
             const p = player;
             for (const b of barrels) {
+                if (p.hammer && hammerHits(p, b)) {
+                    b.dead = true;
+                    addScore([300, 500, 800][(Math.random() * 3) | 0], b.x, b.y - 18);
+                    burst(b.x, b.y - 5, 20, ['#c84c0c', '#7c2c00', '#fca044', '#fcfcfc'], { speed: 1.8, grav: 0.05, life: 35, size: 2 });
+                    shake = Math.max(shake, 2);
+                    sfx.smash();
+                    continue;
+                }
                 const dx = b.x - p.x;
                 const dy = (b.y - 5) - (p.y - 8);
                 if (Math.abs(dx) < 8 && Math.abs(dy) < 11) {
@@ -730,6 +775,17 @@
                     sfx.score();
                 }
             }
+        }
+
+        function hammerDown(p) {
+            return Math.floor(p.hammer / 8) % 2 === 0;
+        }
+
+        // Der Hammer trifft immer vor dem Spieler, beim Ausholen zusätzlich über dem Kopf
+        function hammerHits(p, b) {
+            const dx = (b.x - p.x) * p.face, by = b.y - 5;
+            if (dx > -2 && dx < 20 && Math.abs(by - (p.y - 6)) < 10) return true;
+            return !hammerDown(p) && Math.abs(b.x - p.x) < 10 && by > p.y - 34 && by < p.y - 14;
         }
 
         function die() {
@@ -920,6 +976,14 @@
             }
         }
 
+        function drawHammers() {
+            for (const h of hammers) {
+                if (h.taken) continue;
+                const bob = Math.round(Math.sin(tick * 0.1 + h.x));
+                ctx.drawImage(hammerImg, h.x - 4, Math.round(h.y) - 10 + bob);
+            }
+        }
+
         function drawPlayer() {
             const p = player;
             if (!p) return;
@@ -954,6 +1018,16 @@
             ctx.scale((flip ? -1 : 1) * p.sx, p.sy);
             ctx.drawImage(img, -6, -16);
             ctx.restore();
+
+            // Hammer schwingt auf und ab, blinkt kurz vor dem Ende
+            if (p.hammer && !(p.hammer < 120 && tick % 8 < 4)) {
+                const down = hammerDown(p);
+                ctx.save();
+                ctx.translate(Math.round(p.x + p.face * (down ? 4 : 2)), Math.round(p.y - (down ? 8 : 12)));
+                if (down) ctx.rotate(p.face * Math.PI / 2);
+                ctx.drawImage(hammerImg, -4, -10);
+                ctx.restore();
+            }
         }
 
         function drawParticles() {
@@ -1023,6 +1097,7 @@
             });
             drawCenterText('KLETTERE ZUR PRINZESSIN', 110, 8, '#fcfcfc');
             drawCenterText('SPRING UEBER DIE FAESSER', 124, 8, '#fcfcfc');
+            drawCenterText('HAMMER ZERSCHLAEGT FAESSER', 138, 8, '#fcfcfc');
             if (Math.floor(tick / 30) % 2) drawCenterText('ENTER / TIPPEN', 156, 8, '#f8b800');
             drawCenterText('REKORD ' + String(best).padStart(6, '0'), 186, 8, '#3cbcfc');
         }
@@ -1064,6 +1139,7 @@
             drawDrum();
             drawPrincess();
             drawApe();
+            drawHammers();
             for (const b of barrels) drawBarrelAt(b.x, b.y, b.roll, b.state === 'ladder', b.squash);
             drawPlayer();
             drawParticles();
