@@ -99,6 +99,12 @@
         .dpad .right { grid-area: 2 / 3; }
         .dpad .down { grid-area: 3 / 2; }
 
+        .pad .mute {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+        }
+
         .pad .jump {
             width: 88px;
             height: 88px;
@@ -121,7 +127,7 @@
     <div class="screen">
         <canvas id="screen" width="256" height="240"></canvas>
     </div>
-    <p class="hint">← → laufen · ↑ ↓ Leiter · Leertaste springen · Enter starten</p>
+    <p class="hint">← → laufen · ↑ ↓ Leiter · Leertaste springen · Enter starten · M Ton</p>
     <div class="pad">
         <div class="dpad">
             <button type="button" class="up" data-k="up">▲</button>
@@ -129,6 +135,7 @@
             <button type="button" class="right" data-k="right">▶</button>
             <button type="button" class="down" data-k="down">▼</button>
         </div>
+        <button type="button" class="mute" data-k="mute">♪</button>
         <button type="button" class="jump" data-k="jump">A</button>
     </div>
 
@@ -291,6 +298,80 @@
             return Math.sign(girders[i].y1 - girders[i].y0);
         }
 
+        // ---------- 8-Bit-Sound: alles live per Web Audio erzeugt ----------
+        let audio = null, noiseBuf = null, muted = false, muteMsg = 0;
+
+        function initAudio() {
+            if (!audio) {
+                try {
+                    audio = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    return;
+                }
+                noiseBuf = audio.createBuffer(1, audio.sampleRate, audio.sampleRate);
+                const data = noiseBuf.getChannelData(0);
+                for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+            }
+            if (audio.state === 'suspended') audio.resume();
+        }
+
+        function tone(freq, dur, type = 'square', vol = 0.06, slide = 0, delay = 0) {
+            if (!audio || muted) return;
+            const t = audio.currentTime + delay;
+            const o = audio.createOscillator(), g = audio.createGain();
+            o.type = type;
+            o.frequency.setValueAtTime(freq, t);
+            if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
+            g.gain.setValueAtTime(vol, t);
+            g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+            o.connect(g).connect(audio.destination);
+            o.start(t);
+            o.stop(t + dur);
+        }
+
+        function noise(dur, vol = 0.1, cutoff = 1000, delay = 0) {
+            if (!audio || muted) return;
+            const t = audio.currentTime + delay;
+            const src = audio.createBufferSource(), f = audio.createBiquadFilter(), g = audio.createGain();
+            src.buffer = noiseBuf;
+            f.type = 'lowpass';
+            f.frequency.value = cutoff;
+            g.gain.setValueAtTime(vol, t);
+            g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+            src.connect(f).connect(g).connect(audio.destination);
+            src.start(t);
+            src.stop(t + dur);
+        }
+
+        function melody(notes, step, type = 'square', vol = 0.05) {
+            notes.forEach((f, i) => { if (f) tone(f, step * 0.9, type, vol, 0, i * step); });
+        }
+
+        const sfx = {
+            step: () => tone(110, 0.03, 'triangle', 0.1),
+            climb: () => tone(Math.random() < 0.5 ? 330 : 392, 0.04, 'square', 0.03),
+            jump: () => tone(280, 0.18, 'square', 0.05, 600),
+            land: () => noise(0.06, 0.12, 500),
+            score: () => melody([988, 1319], 0.08),
+            throw: () => tone(220, 0.25, 'triangle', 0.14, -140),
+            pound: () => { tone(70, 0.15, 'triangle', 0.2, -25); noise(0.05, 0.06, 300); },
+            barrel: () => noise(0.07, 0.07, 350),
+            fire: () => noise(0.35, 0.1, 2000),
+            die: () => melody([784, 740, 698, 659, 622, 587, 554, 523, 0, 392, 262], 0.09, 'square', 0.06),
+            win: () => melody([523, 659, 784, 1047, 0, 784, 1047], 0.1, 'square', 0.06),
+            count: () => tone(1760, 0.03, 'square', 0.025),
+            start: () => melody([392, 523, 659, 523, 659, 784], 0.08, 'square', 0.05),
+            over: () => melody([392, 0, 330, 0, 262, 247, 220, 196], 0.14, 'triangle', 0.12),
+            bump: () => tone(196, 0.08, 'square', 0.04)
+        };
+
+        function toggleMute() {
+            initAudio();
+            muted = !muted;
+            muteMsg = 90;
+            if (!muted) sfx.bump();
+        }
+
         // ---------- Spielzustand ----------
         const input = { left: false, right: false, up: false, down: false, jump: false, start: false };
         let mode = 'title', modeT = 0, tick = 0;
@@ -328,6 +409,7 @@
             iris = { t: 0 };
             mode = 'play';
             modeT = 0;
+            sfx.start();
         }
 
         // ---------- Effekte ----------
@@ -374,6 +456,7 @@
 
             shake = shake > 0.3 ? shake * 0.85 : 0;
             if (flash > 0) flash--;
+            if (muteMsg > 0) muteMsg--;
             if (iris && ++iris.t > 40) iris = null;
 
             if (drumLit && tick % 3 === 0) {
@@ -415,7 +498,10 @@
                 if (p.vx) p.face = p.vx;
                 p.x = Math.max(6, Math.min(250, p.x + p.vx));
                 p.anim += Math.abs(p.vx) * 0.15;
-                if (p.vx && tick % 12 === 0) burst(p.x - p.vx * 4, p.y, 1, DUST, { angle: -Math.PI / 2, speed: 0.3, life: 15 });
+                if (p.vx && tick % 12 === 0) {
+                    burst(p.x - p.vx * 4, p.y, 1, DUST, { angle: -Math.PI / 2, speed: 0.3, life: 15 });
+                    sfx.step();
+                }
 
                 const g = girders[p.g];
                 if (p.x < g.x0 || p.x > g.x1) {
@@ -439,6 +525,7 @@
                         p.sx = 0.75;
                         p.sy = 1.3;
                         burst(p.x, p.y, 6, DUST, { angle: -Math.PI / 2, spread: 2.5, speed: 0.8, life: 20 });
+                        sfx.jump();
                     }
                 }
             } else if (p.state === 'air') {
@@ -459,6 +546,7 @@
                         p.sx = 1.35;
                         p.sy = 0.7;
                         burst(p.x, p.y, 8, DUST, { angle: -Math.PI / 2, spread: 3, speed: 0.9, life: 20 });
+                        sfx.land();
                     }
                 }
                 if (p.y > H + 20) die();
@@ -467,6 +555,7 @@
                 const top = gy(l.t, l.x), bottom = gy(l.b, l.x);
                 if (input.up) p.y -= 0.7;
                 if (input.down) p.y += 0.7;
+                if ((input.up || input.down) && tick % 10 === 0) sfx.climb();
                 if (p.y <= top) {
                     p.y = top;
                     p.g = l.t;
@@ -491,6 +580,7 @@
             } else if (ape.pose === 'grab' && ape.poseT > 28) {
                 ape.pose = 'throw';
                 ape.poseT = 0;
+                if (mode === 'play') sfx.throw();
                 barrels.push({ x: 56, y: gy(5, 56), g: 5, state: 'roll', vx: barrelSpeed(), vy: 0, roll: 0, lastLadder: null, scored: false });
             } else if (ape.pose === 'throw' && ape.poseT > 16) {
                 ape.pose = Math.random() < 0.25 ? 'pound' : 'idle';
@@ -500,7 +590,10 @@
                 ape.pose = 'idle';
                 ape.poseT = 0;
             }
-            if (ape.pose === 'pound' && ape.poseT % 15 === 0) shake = Math.max(shake, 1.5);
+            if (ape.pose === 'pound' && ape.poseT % 15 === 0) {
+                shake = Math.max(shake, 1.5);
+                if (mode === 'play') sfx.pound();
+            }
         }
 
         function updateBarrels() {
@@ -516,6 +609,7 @@
                         b.dead = true;
                         drumLit = true;
                         burst(12, 212, 14, FIRE, { angle: -Math.PI / 2, spread: 1.5, speed: 1.6, life: 30 });
+                        if (mode === 'play') sfx.fire();
                     } else if (b.x < g.x0 || b.x > g.x1) {
                         b.state = 'fall';
                         b.vy = 0;
@@ -551,6 +645,7 @@
                         b.squash = 8;
                         burst(b.x, b.y, 5, DUST, { angle: -Math.PI / 2, spread: 3, speed: 0.7, life: 18 });
                         shake = Math.max(shake, 0.8);
+                        if (mode === 'play') sfx.barrel();
                     }
                     if (b.y > H + 20) b.dead = true;
                 } else if (b.state === 'ladder') {
@@ -584,6 +679,7 @@
                     b.scored = true;
                     addScore(100, p.x, p.y - 20);
                     burst(p.x, p.y - 4, 10, SPARK, { speed: 1.2, life: 25 });
+                    sfx.score();
                 }
             }
         }
@@ -594,6 +690,8 @@
             modeT = 0;
             shake = 4;
             flash = 6;
+            sfx.bump();
+            setTimeout(sfx.die, 400);
         }
 
         function updateDying() {
@@ -607,6 +705,7 @@
                     mode = 'over';
                     modeT = 0;
                     player = null;
+                    sfx.over();
                 }
             }
         }
@@ -617,11 +716,15 @@
             ape.pose = 'pound';
             ape.poseT = 0;
             burst(player.x + 6, player.y - 24, 30, CONFETTI, { speed: 1.6, grav: 0.04, life: 70 });
+            sfx.win();
         }
 
         function updateWin() {
             ape.poseT++;
-            if (ape.poseT % 15 === 0) shake = Math.max(shake, 1.2);
+            if (ape.poseT % 15 === 0) {
+                shake = Math.max(shake, 1.2);
+                if (modeT > 60) sfx.pound();
+            }
             if (modeT % 8 === 0 && modeT < 80) {
                 burst(40 + Math.random() * 176, 0, 6, CONFETTI, { angle: Math.PI / 2, spread: 1.2, speed: 0.8, grav: 0.02, life: 120 });
             }
@@ -629,6 +732,7 @@
             if (modeT > 60 && bonus > 0 && modeT % 2 === 0) {
                 bonus -= 100;
                 score += 100;
+                if (modeT % 4 === 0) sfx.count();
             }
             if (modeT > 60 && bonus <= 0 && modeT > 170) {
                 round++;
@@ -920,6 +1024,7 @@
             if (mode === 'title') drawTitle();
             if (mode === 'over') drawOver();
             if (iris) drawIris();
+            if (muteMsg) drawCenterText(muted ? 'TON AUS' : 'TON AN', 214, 8, '#f8b800');
             if (flash) {
                 ctx.fillStyle = 'rgba(255, 255, 255, ' + flash / 8 + ')';
                 ctx.fillRect(0, 0, W, H);
@@ -945,6 +1050,8 @@
             ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down'
         };
         document.addEventListener('keydown', e => {
+            initAudio();
+            if (e.code === 'KeyM' && !e.repeat) toggleMute();
             if (KEYS[e.code]) input[KEYS[e.code]] = true;
             if (!e.repeat && ['Space', 'KeyZ', 'KeyX'].includes(e.code)) input.jump = true;
             if (!e.repeat && ['Enter', 'Space'].includes(e.code)) input.start = true;
@@ -953,13 +1060,19 @@
         document.addEventListener('keyup', e => {
             if (KEYS[e.code]) input[KEYS[e.code]] = false;
         });
-        cv.addEventListener('pointerdown', () => { input.start = true; });
+        cv.addEventListener('pointerdown', () => {
+            initAudio();
+            input.start = true;
+        });
         document.querySelectorAll('.pad button').forEach(btn => {
             const k = btn.dataset.k;
-            const release = () => { if (k !== 'jump') input[k] = false; };
+            const release = () => { if (k !== 'jump' && k !== 'mute') input[k] = false; };
             btn.addEventListener('pointerdown', e => {
                 e.preventDefault();
-                if (k === 'jump') {
+                initAudio();
+                if (k === 'mute') {
+                    toggleMute();
+                } else if (k === 'jump') {
                     input.jump = true;
                     input.start = true;
                 } else {
