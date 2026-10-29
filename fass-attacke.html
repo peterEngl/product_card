@@ -372,6 +372,53 @@
             if (!muted) sfx.bump();
         }
 
+        // ---------- Hintergrundmelodie: Rechteck-Melodie, Dreieck-Bass, Rausch-Hi-Hat ----------
+        function note(name) {
+            if (name === '-') return 0;
+            const m = name.match(/^([A-G])(#?)(\d)$/);
+            const semi = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1]] + (m[2] ? 1 : 0);
+            return 440 * Math.pow(2, (semi + 12 * (Number(m[3]) + 1) - 69) / 12);
+        }
+
+        const TUNE = ('A4 C5 E5 C5 A4 C5 E5 G5  F5 E5 C5 A4 F4 A4 C5 -  ' +
+            'G4 B4 D5 B4 G4 B4 D5 F5  E5 D5 B4 G#4 E4 - G#4 B4  ' +
+            'E5 - E5 D5 C5 - A4 -  D5 - D5 C5 A4 - F4 -  ' +
+            'E5 - G#5 - B5 - G#5 E5  E5 D5 C5 B4 G#4 - - -').trim().split(/\s+/).map(note);
+        // Bass: Grundton pro Takt, abwechselnd tief und eine Oktave höher
+        const BASS = ['A', 'F', 'G', 'E', 'A', 'D', 'E', 'E']
+            .flatMap(r => [r + '2', '-', r + '3', '-', r + '2', '-', r + '3', '-']).map(note);
+
+        const music = { step: 0, next: 0, timer: null };
+
+        function startMusic(delay = 0) {
+            stopMusic();
+            if (!audio) return;
+            music.step = 0;
+            music.next = audio.currentTime + delay;
+            music.timer = setInterval(scheduleMusic, 50);
+        }
+
+        function stopMusic() {
+            clearInterval(music.timer);
+            music.timer = null;
+        }
+
+        function scheduleMusic() {
+            if (document.hidden) return;
+            const stepDur = 60 / (Math.min(180, 134 + round * 6) * 2);
+            // Nach einer Pause nicht alle verpassten Noten auf einmal nachspielen
+            if (music.next < audio.currentTime - 0.1) music.next = audio.currentTime + 0.05;
+            while (music.next < audio.currentTime + 0.2) {
+                const i = music.step % TUNE.length;
+                const d = Math.max(0, music.next - audio.currentTime);
+                if (TUNE[i]) tone(TUNE[i], stepDur * 0.85, 'square', 0.022, 0, d);
+                if (BASS[i]) tone(BASS[i], stepDur * 1.8, 'triangle', 0.09, 0, d);
+                if (i % 2) noise(0.025, 0.018, 7000, d);
+                music.next += stepDur;
+                music.step++;
+            }
+        }
+
         // ---------- Spielzustand ----------
         const input = { left: false, right: false, up: false, down: false, jump: false, start: false };
         let mode = 'title', modeT = 0, tick = 0;
@@ -410,6 +457,7 @@
             mode = 'play';
             modeT = 0;
             sfx.start();
+            startMusic(0.6);
         }
 
         // ---------- Effekte ----------
@@ -690,6 +738,7 @@
             modeT = 0;
             shake = 4;
             flash = 6;
+            stopMusic();
             sfx.bump();
             setTimeout(sfx.die, 400);
         }
@@ -716,6 +765,7 @@
             ape.pose = 'pound';
             ape.poseT = 0;
             burst(player.x + 6, player.y - 24, 30, CONFETTI, { speed: 1.6, grav: 0.04, life: 70 });
+            stopMusic();
             sfx.win();
         }
 
