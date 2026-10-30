@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Parfum-Fänger</title>
+    <link rel="icon" type="image/png" href="images/favicon-32x32.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,700&family=Montserrat:wght@500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            --cream: hsl(30, 38%, 92%);
+            --dark-cyan: hsl(158, 36%, 37%);
+            --dark-green: #1A4032;
+            --very-dark-blue: hsl(212, 21%, 14%);
+            --dark-greyish-blue: hsl(228, 12%, 48%);
+            --white: hsl(0, 0%, 100%);
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Montserrat', sans-serif;
+            background-color: var(--cream);
+            padding: 16px;
+        }
+
+        .game-card {
+            width: 100%;
+            max-width: 400px;
+            background-color: var(--white);
+            border-radius: 5px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Fraunces', serif;
+            font-size: 28px;
+            color: var(--very-dark-blue);
+        }
+
+        .hud {
+            display: flex;
+            justify-content: space-between;
+            margin: 12px 0;
+            font-weight: 700;
+            color: var(--dark-greyish-blue);
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            background-color: var(--cream);
+            border-radius: 5px;
+            touch-action: none;
+        }
+
+        p {
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+            color: var(--dark-greyish-blue);
+        }
+
+        button {
+            margin-top: 12px;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--white);
+            background-color: var(--dark-cyan);
+            padding: 14px 40px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.5s;
+        }
+
+        button:hover,
+        button:active {
+            background-color: var(--dark-green);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="game-card">
+        <h1>Parfum-Fänger</h1>
+        <div class="hud">
+            <span>Punkte: <span id="score">0</span></span>
+            <span id="lives">❤❤❤</span>
+            <span>Rekord: <span id="best">0</span></span>
+        </div>
+        <canvas id="game" width="360" height="480"></canvas>
+        <p>Fang die Parfums 🧴 mit dem Wagen, weich den Preisschildern 🏷️ aus.<br>
+            Steuerung: Pfeiltasten / A-D, Maus oder Finger.</p>
+        <button type="button" id="start">Spiel starten</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const livesEl = document.getElementById('lives');
+        const bestEl = document.getElementById('best');
+        const startBtn = document.getElementById('start');
+
+        const cart = { x: 160, y: 430, w: 56, h: 30, speed: 6 };
+        let items = [], score, lives, running, spawnTimer, keys = {};
+
+        function loadBest() {
+            try { return Number(localStorage.getItem('parfumBest')) || 0; } catch (e) { return 0; }
+        }
+        function saveBest(value) {
+            try { localStorage.setItem('parfumBest', value); } catch (e) { }
+        }
+        bestEl.textContent = loadBest();
+
+        function startGame() {
+            items = [];
+            score = 0;
+            lives = 3;
+            spawnTimer = 0;
+            cart.x = (canvas.width - cart.w) / 2;
+            running = true;
+            startBtn.style.display = 'none';
+            updateHud();
+            requestAnimationFrame(loop);
+        }
+
+        function updateHud() {
+            scoreEl.textContent = score;
+            livesEl.textContent = '❤'.repeat(lives) + '♡'.repeat(3 - lives);
+        }
+
+        function spawnItem() {
+            const isBottle = Math.random() < 0.7;
+            items.push({
+                x: 15 + Math.random() * (canvas.width - 30),
+                y: -20,
+                speed: 2 + Math.random() * 1.5 + score * 0.05,
+                good: isBottle
+            });
+        }
+
+        function loop() {
+            update();
+            if (!running) return;
+            draw();
+            requestAnimationFrame(loop);
+        }
+
+        function update() {
+            if (keys.ArrowLeft || keys.a) cart.x -= cart.speed;
+            if (keys.ArrowRight || keys.d) cart.x += cart.speed;
+            cart.x = Math.max(0, Math.min(canvas.width - cart.w, cart.x));
+
+            // Je mehr Punkte, desto schneller kommen neue Gegenstände
+            spawnTimer--;
+            if (spawnTimer <= 0) {
+                spawnItem();
+                spawnTimer = Math.max(20, 60 - score);
+            }
+
+            for (const item of items) {
+                item.y += item.speed;
+                const caught = item.y > cart.y - 10 && item.y < cart.y + cart.h &&
+                    item.x > cart.x - 10 && item.x < cart.x + cart.w + 10;
+                if (caught) {
+                    item.done = true;
+                    if (item.good) score++; else lives--;
+                    updateHud();
+                } else if (item.y > canvas.height + 20) {
+                    item.done = true;
+                }
+            }
+            items = items.filter(item => !item.done);
+
+            if (lives <= 0) gameOver();
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.font = '28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            for (const item of items) {
+                ctx.fillText(item.good ? '🧴' : '🏷️', item.x, item.y);
+            }
+
+            // Einkaufswagen
+            ctx.fillStyle = 'hsl(158, 36%, 37%)';
+            ctx.fillRect(cart.x, cart.y, cart.w, cart.h - 8);
+            ctx.fillStyle = '#1A4032';
+            ctx.beginPath();
+            ctx.arc(cart.x + 12, cart.y + cart.h - 3, 5, 0, Math.PI * 2);
+            ctx.arc(cart.x + cart.w - 12, cart.y + cart.h - 3, 5, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function gameOver() {
+            running = false;
+            if (score > loadBest()) saveBest(score);
+            bestEl.textContent = Math.max(score, loadBest());
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'hsl(212, 21%, 14%)';
+            ctx.font = '700 32px Fraunces, serif';
+            ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 20);
+            ctx.font = '500 16px Montserrat, sans-serif';
+            ctx.fillText(score + ' Parfums gefangen', canvas.width / 2, canvas.height / 2 + 20);
+
+            startBtn.textContent = 'Nochmal spielen';
+            startBtn.style.display = 'inline-block';
+        }
+
+        // Tastatur
+        document.addEventListener('keydown', e => {
+            keys[e.key] = true;
+            if (e.key.startsWith('Arrow')) e.preventDefault();
+        });
+        document.addEventListener('keyup', e => { keys[e.key] = false; });
+
+        // Maus und Touch: Wagen folgt dem Zeiger
+        canvas.addEventListener('pointermove', e => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            cart.x = Math.max(0, Math.min(canvas.width - cart.w, x - cart.w / 2));
+        });
+
+        startBtn.addEventListener('click', startGame);
+
+        // Startbild
+        draw();
+    </script>
+</body>
+
+</html>
